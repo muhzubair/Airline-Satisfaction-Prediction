@@ -1,0 +1,214 @@
+---
+title: "Project_1_classification"
+author: "Muhammad Zubair"
+date: "10/14/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align='center')
+```
+
+## Link to dataset: https://www.kaggle.com/binaryjoker/airline-passenger-satisfaction
+
+####### I apologize in advance for serval pages full of warnings, I was unable to get a correlation mattrix with the regular function.
+
+# Reading in the data 
+```{r}
+df <- read.csv("airline_passenger_satisfaction.csv")
+```
+
+# Data Exploration 
+
+#### Our dataset have about 130k rows and 24 attributes
+```{r}
+# Dimensions of our data satisfies the assigment requirements
+dim(df)
+```
+
+#### The columns will be converted into factor data types to enahnce the process for building model
+```{r}
+# Information about our data, and column types
+str(df)
+```
+
+#### Getting a general idea of how the data looks like
+```{r}
+# Viewing first 5 rows of data
+head(df)
+```
+```{r}
+# Viewing the last 5 rows of data
+tail(df)
+```
+
+#### These values help us interept what kind of data we're dealing with. For example, most people that travel on a plane are about 30-40 years old and avergae distance of flight is about 1190 miles. We can further use these values to find pattern in the data.
+```{r}
+# statiscal metrics of numeric variables in data
+summary(df)
+```
+
+#### One attribute have 393 missing values.
+```{r}
+# Checking for null values in data set
+sapply(df, function(x) sum(is.na(x)))
+```
+
+# Data cleaning
+
+```{r}
+# Dropping the X columns, as it is used to number the rows and wont have effect on algorithm
+df <- subset(df, select = -c(X))
+```
+
+```{r}
+# chaging all the columns of type char to factor and integer to numeruc, so we can do Exploraitry data analysis
+df[sapply(df, is.character)] <- lapply(df[sapply(df, is.character)], as.factor)
+df[sapply(df, is.integer)] <- lapply(df[sapply(df, is.integer)], as.numeric)
+str(df)
+```
+
+```{r}
+# Droppping the rows that conatined NA values because there are only 393 rows compared to our datastet that have 130k rows. So, dropping these rows wont have much effect on model.
+df <- na.omit(df) 
+sapply(df, function(x) sum(is.na(x)))
+```
+
+
+
+# Plots 
+
+```{r}
+# Checking to see if the dataset is balanced 
+library(ggplot2)
+ggplot(df, aes(x = satisfaction)) + geom_bar(color="white", fill = "steelblue") + scale_x_discrete(guide = guide_axis(n.dodge=3)) + xlab("Satisfied or not") 
+```
+
+##### Columns like flight distance, deapprture/arrival time convinent, gate location, departure delay in minutes and arrival delay in minutes will be removed as they have low correlation with satisfaction.
+```{r}
+library(tidyverse)
+library(lsr)
+data <- df[sapply(df, is.numeric)]
+
+# Randomly getting only 10% of the data to speed up process for EDA, and avoid error of "cannot allocate vector of size .. GB"
+set.seed(123)
+index <- sample(1:nrow(data), 0.01*nrow(data), replace = FALSE)
+
+small_df_numeric <- data[index,]
+
+# function to get chi square p value and Cramers V
+f = function(x,y) {
+    tbl = df %>% select(x,y) %>% table()
+    chisq_pval = round(chisq.test(tbl)$p.value, 4)
+    cramV = round(cramersV(tbl), 4) 
+    data.frame(x, y, chisq_pval, cramV) }
+
+# create unique combinations of column names
+# sorting will help getting a better plot (upper triangular)
+df_comb = data.frame(t(combn(sort(names(df)), 2)), stringsAsFactors = F)
+
+# apply function to each variable combination
+df_res = map2_df(df_comb$X1, df_comb$X2, f)
+
+# plot results
+df_res %>%
+  ggplot(aes(x,y,fill=chisq_pval))+
+  geom_tile()+
+  geom_text(size = 1, aes(x,y,label=cramV))+
+  scale_fill_gradient(low="red", high="yellow")+
+  theme_classic() + scale_x_discrete(guide = guide_axis(n.dodge=3)) +
+  theme(axis.text.x = element_text(size = 1))
+```
+
+```{r}
+# Removing the columns
+df <- subset(df, select = -c(arrival_delay_in_minutes, arrival_delay_in_minutes, gate_location, departure_arrival_time_convenient))
+```
+
+
+
+# Building the model
+
+```{r}
+# Splitting the data into trian/test data
+set.seed(1234)
+i <- sample(1:nrow(df), 0.75*nrow(df), replace = FALSE)
+train <- df[i,]
+test <- df[-i,]
+```
+
+
+### Logistic regression 
+##### We can see that all of these observations are good predictors for satisfaction because of the three *** next to them.
+```{r}
+glm1 <- glm(satisfaction~., data = train, family = "binomial")
+summary(glm1)
+```
+
+##### Logistic regression performed fairly well, now lets try some other models and evaulate their results.
+```{r}
+library(caret)
+# Evaluating the model on test data
+probs <- predict(glm1, newdata=test, type="response")
+pred <- ifelse(probs>0.5,"satisfied", "neutral or dissatisfied" )
+# Accuracy score
+acc <- mean(pred==(test$satisfaction))
+print(paste("accuracy = ", acc))
+confusionMatrix(as.factor(pred), test$satisfaction)
+
+```
+
+### Naive Bayes
+##### Naive bayes did worser than logisitc regression as we got an accuracy score of 0.85, comparted to 0.87. However, Naive bayes still did not perform bad on this dataset.
+```{r}
+# Naive Bayes model
+library(e1071)
+nb1 <- naiveBayes(satisfaction ~., data = train)
+nb1
+```
+
+```{r}
+library(caret)
+# Evaluating on the test data:
+p1 <- predict(nb1, newdata = test, type = "class")
+confusionMatrix(p1, test$satisfaction)
+```
+
+### Decision Tree
+```{r}
+library(tree)
+tree_airline <- tree(satisfaction ~., data = train)
+summary(tree_airline)
+```
+
+##### Decision tree in classification performed much more efficiently than logistic regression and naive bayes, as seen from the high accuracy score of 0.90. 
+```{r}
+# Evaluating on test data
+pred_tree <- predict(tree_airline, newdata = test, type = "class")
+confusionMatrix(pred_tree, test$satisfaction)
+```
+
+##### Pruning the tree to eliminate overfitting
+```{r}
+### Cross validation 
+##### We will prune the tree to 7 terminal nodes because we want to avoid overfitting by pruning it to a node with smallest deviance. 
+cv_tree <- cv.tree(tree_airline)
+plot(cv_tree$size, cv_tree$dev, type='b')
+```
+
+##### In this case, the pruning did not improve results on test data because we got a higher accuracy score on the unpruned Tree.
+```{r}
+tree_pruned <- prune.tree(tree_airline, best=7)
+pred_pruned <- predict(tree_pruned, newdata=test, type = "class")
+confusionMatrix(pred_pruned, test$satisfaction)
+```
+# Results Analysis
+
+### Accuracy score for these algortihms:
+##### Decision Tree: 0.90
+##### Pruned Decision Tree: 0.876
+##### Logistic regression: 0.875
+##### Naive Bayes: 0.85
+
+### Summary: 
+Even in classification Decision tree gave us the most accurate results on the test data. Our decision tree was accurate 90% of the time, compared to 85% accuracy for Naive Bayes and 87.5% for logistic regression. Decision Tree worked well on this data because there are a lot of predictors in our data set, which is easy for decision trees to handle because they bisect the space into smaller and smaller regions. Unlike, Logistic regression, which divided the data into 2 classes and Naive Bayes, which calculated the likelihood of each event occurring. This data set also had non-linearity among predictors, which meant that a non-parametric algorithm like decision tree would perform better. We also pruned the Decision Tree and still got a higher accuracy score of 87.6% as compared to Naive Bayes and logistic regression. Furthermore, we can also use this script on new data to help airlines consider the factors that can satisfy a person and lead to a more comfortable trip. 
